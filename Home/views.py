@@ -10,6 +10,9 @@ import re
 
 @never_cache
 def admin_login(request):
+    error=''
+    if request.user.is_authenticated and request.session.get('is_admin'):
+        return redirect('adminpanel')                                                       
 
     if request.user.is_authenticated and request.session.get('is_admin'):
         messages.info(request, 'Already logged in as admin.')
@@ -19,8 +22,8 @@ def admin_login(request):
         password = request.POST.get('password', '')
 
         if not username or not password:
-            messages.error(request, 'Both fields required.')
-            return render(request, 'admin_login.html')
+            error='both fields are required'
+        
 
         user = authenticate(request, username=username, password=password)
         if user and user.is_staff:
@@ -29,22 +32,25 @@ def admin_login(request):
             next_url = request.GET.get('next', '') 
             return redirect(next_url or 'adminpanel') 
         else:
-            messages.error(request, 'Invalid or non-admin credentials.')
-            return render(request, 'admin_login.html')
+            
+            error= 'Invalid or non-admin credentials.'
+           
+        
+    context={
+        'error':error,
+    }
 
-    return render(request, 'admin_login.html')
+    return render(request, 'admin_login.html',context)
 
 
 @never_cache
-def admin_logout(request): 
-    request.session.flush()  
+def admin_logout(request):
     logout(request)
-    messages.success(request, 'Admin logged out successfully!')
     return redirect('adminlogin')
 
 @never_cache
 def admin_panel(request):
-    if not request.session.get('is_admin'):
+    if not request.user.is_superuser and not request.user.is_authenticated:
         return redirect('adminlogin')
 
     search_query = request.GET.get('search', '')
@@ -55,7 +61,8 @@ def admin_panel(request):
 
 @never_cache
 def edit_user(request, user_id):
-    if not request.session.get('is_admin'):
+    
+    if not request.user.is_superuser:
         return redirect('adminlogin')
     user = get_object_or_404(User, id=user_id)
 
@@ -67,10 +74,10 @@ def edit_user(request, user_id):
 
         if User.objects.filter(username=username).exclude(id=user_id).exists():
             messages.error(request, 'Username taken.')
-            return render(request, 'edit_user.html', {'user_obj': user})
+            
         if User.objects.filter(email=email).exclude(id=user_id).exists():
             messages.error(request, 'Email taken.')
-            return render(request, 'edit_user.html', {'user_obj': user})
+           
 
         user.username = username
         user.email = email
@@ -105,32 +112,40 @@ def create_user(request):
     if not request.session.get('is_admin'):
         return redirect('adminlogin')
 
+    context = {}  # Build context progressively
     if request.method == 'POST':
         username = request.POST.get('username', '').strip()
         email = request.POST.get('email', '').strip()
         password = request.POST.get('password', '')
         is_staff = request.POST.get('is_staff') == 'on'
-        is_active = request.POST.get('is_active') == 'on'  
+        is_active = request.POST.get('is_active') == 'on'
 
+        errors = []
         if not all([username, email, password]):
-            messages.error(request, 'Username, email, password required.')
-            return render(request, 'create_user.html')
-
+            errors.append('Username, email, password required.')
+        if len(username) < 4:  # Added length validation
+            errors.append('Username too short (min 3 chars).')
+        if len(password) < 6:
+            errors.append('Password too short (min 6 chars).')
         if User.objects.filter(username=username).exists():
-            messages.error(request, 'Username exists.')
-            return render(request, 'create_user.html')
+            errors.append('Username exists.')
         if User.objects.filter(email=email).exists():
-            messages.error(request, 'Email exists.')
-            return render(request, 'create_user.html')
+            errors.append('Email exists.')
+        if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', email):  # Added email regex
+            errors.append('Invalid email format.')
 
-        user = User.objects.create_user(username=username, email=email, password=password)
-        user.is_staff = is_staff
-        user.is_active = is_active
-        user.save()
-        messages.success(request, 'User created.')
-        return redirect('adminpanel')
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+        else:
+            user = User.objects.create_user(username=username, email=email, password=password)
+            user.is_staff = is_staff
+            user.is_active = is_active
+            user.save()
+            messages.success(request, 'User created.')
+            return redirect('adminpanel')
 
-    return render(request, 'create_user.html')
+    return render(request, 'create_user.html', context)
 
 @never_cache
 def block_unblock_user(request, user_id):
@@ -227,8 +242,7 @@ def signup_page(request):
 @never_cache
 @login_required(login_url='login')
 def home(request):
-    return render(request, "home.html")
-
+    return render(request, "home.html", {'current_user': request.user})
 @never_cache
 @login_required(login_url='login')
 def about(request):
